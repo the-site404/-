@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>커스텀 디지털 플래너 제너레이터 v3.2</title>
+    <!-- Tailwind CSS & FontAwesome -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- html2pdf.js for High Quality PDF Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Nanum+Gothic:wght@400;700&family=Nanum+Myeongjo:wght@400;700&family=Nanum+Pen+Script&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Nanum Gothic', sans-serif;
+            user-select: none;
+        }
+        /* Custom Scrollbars */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Grid background pattern */
+        .grid-pattern {
+            background-size: 20px 20px;
+            background-image: 
+                linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+        }
+
+        /* Sticker Box Canvas UI */
+        .sticker-box {
+            position: absolute;
+            cursor: move;
+            touch-action: none;
+            box-sizing: border-box;
+        }
+        .sticker-box.selected {
+            outline: 2px dashed #3b82f6;
+            outline-offset: 2px;
+        }
+        .resize-handle {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: #3b82f6;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            display: none;
+            z-index: 50;
+        }
+        .sticker-box.selected .resize-handle {
+            display: block;
+        }
+        .resize-handle.nw { top: -6px; left: -6px; cursor: nwse-resize; }
+        .resize-handle.ne { top: -6px; right: -6px; cursor: nesw-resize; }
+        .resize-handle.sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+        .resize-handle.se { bottom: -6px; right: -6px; cursor: nwse-resize; }
+
+        /* Font options */
+        .font-nanum-gothic { font-family: 'Nanum Gothic', sans-serif; }
+        .font-nanum-myeongjo { font-family: 'Nanum Myeongjo', serif; }
+        .font-nanum-brush { font-family: 'Nanum Pen Script', cursive; font-size: 1.2em; }
+        .font-gowun-dodum { font-family: 'Gowun Dodum', sans-serif; }
+
+        [contenteditable="true"]:focus {
+            outline: none;
+            background-color: rgba(59, 130, 246, 0.05);
+            border-radius: 4px;
+        }
+
+        @media print {
+            .no-print { display: none !important; }
+            .planner-page { shadow: none !important; margin: 0 !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-100 h-screen flex flex-col overflow-hidden">
+
+    <!-- Top Navigation Bar -->
+    <header class="bg-white border-b border-slate-200 h-14 px-4 flex items-center justify-between no-print z-30 shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="bg-indigo-600 text-white p-2 rounded-lg font-bold text-sm">
+                <i class="fa-solid fa-layer-group mr-1"></i> PLANNER
+            </div>
+            <h1 class="font-bold text-slate-800 text-lg hidden sm:block">커스텀 플래너 제너레이터 v3.2</h1>
+        </div>
+
+        <!-- History & Actions -->
+        <div class="flex items-center space-x-2">
+            <button onclick="undo()" class="p-2 text-slate-600 hover:bg-slate-100 rounded-md transition" title="되돌리기 (Ctrl+Z)">
+                <i class="fa-solid fa-rotate-left"></i>
+            </button>
+            <button onclick="redo()" class="p-2 text-slate-600 hover:bg-slate-100 rounded-md transition" title="다시 실행 (Ctrl+Y)">
+                <i class="fa-solid fa-rotate-right"></i>
+            </button>
+            <div class="h-5 w-px bg-slate-200 mx-1"></div>
+
+            <button onclick="clearCanvas()" class="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-md border border-red-200 transition">
+                <i class="fa-solid fa-trash mr-1"></i> 전체 삭제
+            </button>
+            
+            <label class="px-3 py-1.5 text-xs text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md cursor-pointer transition">
+                <i class="fa-solid fa-folder-open mr-1"></i> JSON 열기
+                <input type="file" id="jsonInput" accept=".json" class="hidden" onchange="loadJSON(event)">
+            </label>
+            <button onclick="saveJSON()" class="px-3 py-1.5 text-xs text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition">
+                <i class="fa-solid fa-floppy-disk mr-1"></i> JSON 저장
+            </button>
+
+            <button onclick="exportToPDF()" class="px-4 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm transition">
+                <i class="fa-solid fa-file-pdf mr-1"></i> PDF 내보내기
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="flex-1 flex overflow-hidden">
+        
+        <!-- Left Sidebar: Widget Library -->
+        <aside class="w-72 bg-white border-r border-slate-200 flex flex-col no-print shrink-0">
+            <div class="p-3 border-b border-slate-100 font-bold text-slate-700 text-sm flex items-center">
+                <i class="fa-solid fa-cubes text-indigo-500 mr-2"></i> 스티커 / 플래너 요소
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 space-y-4">
+                
+                <!-- Basic Tools -->
+                <div>
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">기본 요소</h3>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="addTextSticker()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-font text-indigo-500 mr-2"></i> 텍스트 상자
+                        </button>
+                        <button onclick="addShape('rect')" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-regular fa-square text-indigo-500 mr-2"></i> 사각형
+                        </button>
+                        <button onclick="addShape('circle')" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-regular fa-circle text-indigo-500 mr-2"></i> 원형
+                        </button>
+                        <button onclick="addHyperlinkSticker()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-link text-indigo-500 mr-2"></i> 하이퍼링크 탭
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Circular 24h Planners -->
+                <div>
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">원형 24시 플래너 4종</h3>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="addCircularPlanner('line')" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex flex-col items-center">
+                            <i class="fa-regular fa-clock text-xl text-indigo-500 mb-1"></i>
+                            <span>기본 라인</span>
+                        </button>
+                        <button onclick="addCircularPlanner('pie')" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex flex-col items-center">
+                            <i class="fa-solid fa-chart-pie text-xl text-indigo-500 mb-1"></i>
+                            <span>12분할 휠</span>
+                        </button>
+                        <button onclick="addCircularPlanner('ring')" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex flex-col items-center">
+                            <i class="fa-solid fa-compact-disc text-xl text-indigo-500 mb-1"></i>
+                            <span>이중 링</span>
+                        </button>
+                        <button onclick="addCircularPlanner('daynight')" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex flex-col items-center">
+                            <i class="fa-solid fa-sun text-xl text-indigo-500 mb-1"></i>
+                            <span>12시간 데이&나이트</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Incorrect Answer Notes -->
+                <div>
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">오답노트 서식 3종</h3>
+                    <div class="space-y-1.5">
+                        <button onclick="addWrongAnswerNote('basic')" class="w-full p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center justify-between">
+                            <span><i class="fa-solid fa-book-open text-amber-500 mr-1.5"></i> 기본 분할 오답노트</span>
+                            <i class="fa-solid fa-plus text-slate-300 text-xs"></i>
+                        </button>
+                        <button onclick="addWrongAnswerNote('cornell')" class="w-full p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center justify-between">
+                            <span><i class="fa-solid fa-graduation-cap text-amber-500 mr-1.5"></i> 코넬 오답노트</span>
+                            <i class="fa-solid fa-plus text-slate-300 text-xs"></i>
+                        </button>
+                        <button onclick="addWrongAnswerNote('scrap')" class="w-full p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center justify-between">
+                            <span><i class="fa-solid fa-scissors text-amber-500 mr-1.5"></i> 문제 스크랩 오답노트</span>
+                            <i class="fa-solid fa-plus text-slate-300 text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Planners & Paper Sheets -->
+                <div>
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">플래너 & 속지</h3>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="addTodoList()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-list-check text-emerald-500 mr-1.5"></i> 투두리스트
+                        </button>
+                        <button onclick="addTimeline()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-timeline text-emerald-500 mr-1.5"></i> 타임라인 (06-02)
+                        </button>
+                        <button onclick="addMonthlyGrid()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-regular fa-calendar-days text-emerald-500 mr-1.5"></i> 월간 달력
+                        </button>
+                        <button onclick="addEisenhowerMatrix()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-table-cells-large text-emerald-500 mr-1.5"></i> 4분면 매트릭스
+                        </button>
+                        <button onclick="addLinedPaper()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-bars text-emerald-500 mr-1.5"></i> 줄노트
+                        </button>
+                        <button onclick="addGridPaper()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-border-all text-emerald-500 mr-1.5"></i> 모눈종이
+                        </button>
+                        <button onclick="addHabitTracker()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-bullseye text-emerald-500 mr-1.5"></i> 습관 트래커
+                        </button>
+                        <button onclick="addBudgetTracker()" class="p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center">
+                            <i class="fa-solid fa-coins text-emerald-500 mr-1.5"></i> 가계부
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Custom Sticky Notes & Images -->
+                <div>
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">기타 유용한 요소</h3>
+                    <div class="space-y-1.5">
+                        <button onclick="addPostIt()" class="w-full p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center justify-between">
+                            <span><i class="fa-solid fa-note-sticky text-yellow-500 mr-1.5"></i> 포스트잇 메모지</span>
+                            <i class="fa-solid fa-plus text-slate-300 text-xs"></i>
+                        </button>
+                        <label class="w-full p-2 border border-slate-200 rounded-lg text-left text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 flex items-center justify-between cursor-pointer">
+                            <span><i class="fa-regular fa-image text-purple-500 mr-1.5"></i> 내 이미지/스티커 업로드</span>
+                            <i class="fa-solid fa-upload text-slate-300 text-xs"></i>
+                            <input type="file" id="imageInput" accept="image/*" class="hidden" onchange="uploadImage(event)">
+                        </label>
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- Center Canvas Workspace -->
+        <main class="flex-1 bg-slate-200 overflow-auto p-8 flex justify-center items-start">
+            <div id="plannerPage" class="planner-page relative bg-white shadow-xl rounded-sm grid-pattern transition-colors duration-200" style="width: 794px; min-height: 1123px;" onclick="handleCanvasClick(event)">
+                <!-- Dynamic Stickers rendered here -->
+            </div>
+        </main>
+
+        <!-- Right Fixed Sidebar: 2-TAB System (Settings & Deco Stickers) -->
+        <aside class="w-80 bg-white border-l border-slate-200 flex flex-col no-print shrink-0">
+            <!-- TAB Header -->
+            <div class="flex border-b border-slate-200 bg-slate-50">
+                <button id="tabBtnSettings" onclick="switchRightTab('settings')" class="flex-1 py-3 text-xs font-bold text-indigo-600 border-b-2 border-indigo-600 bg-white flex items-center justify-center">
+                    <i class="fa-solid fa-sliders mr-1.5"></i> 문서/스티커 설정
+                </button>
+                <button id="tabBtnStickers" onclick="switchRightTab('stickers')" class="flex-1 py-3 text-xs font-bold text-slate-500 hover:text-indigo-600 flex items-center justify-center">
+                    <i class="fa-solid fa-heart mr-1.5"></i> ⭐ 다꾸 스티커
+                </button>
+            </div>
+
+            <!-- TAB 1: Settings Panel -->
+            <div id="tabContentSettings" class="flex-1 overflow-y-auto p-4">
+                
+                <!-- Active Object Status Indicator -->
+                <div id="selectedObjectType" class="mb-4 text-xs font-bold text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-100 flex justify-between items-center">
+                    <span>선택 상태: <span id="activeName" class="text-indigo-600">문서 전체</span></span>
+                    <button id="btnDeleteSelected" onclick="deleteSelectedSticker()" class="hidden text-red-500 hover:text-red-700">
+                        <i class="fa-solid fa-trash-can"></i> 삭제
+                    </button>
+                </div>
+
+                <!-- Document Settings (When no sticker is selected) -->
+                <div id="docSettingsGroup" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">문서 배경 색상</label>
+                        <div class="flex items-center space-x-2">
+                            <input type="color" id="docBgColor" value="#ffffff" onchange="changeDocBgColor(this.value)" class="w-8 h-8 rounded border border-slate-200 cursor-pointer">
+                            <span class="text-xs text-slate-500">속지 바탕색 설정</span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">모눈 눈금선 가시성</label>
+                        <button onclick="toggleGridPattern()" class="w-full py-1.5 border border-slate-200 rounded text-xs text-slate-700 hover:bg-slate-50">
+                            모눈 격자 켜기 / 끄기
+                        </button>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">감성 테마 프리셋</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="applyDocPreset('#ffffff')" class="p-2 border rounded text-xs bg-white text-slate-700">Clean White</button>
+                            <button onclick="applyDocPreset('#fdfbf7')" class="p-2 border rounded text-xs bg-[#fdfbf7] text-amber-900">Warm Cream</button>
+                            <button onclick="applyDocPreset('#f4f7f6')" class="p-2 border rounded text-xs bg-[#f4f7f6] text-teal-900">Soft Mint</button>
+                            <button onclick="applyDocPreset('#fcf5f7')" class="p-2 border rounded text-xs bg-[#fcf5f7] text-pink-900">Pastel Pink</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sticker Specific Settings (When a sticker is selected) -->
+                <div id="stickerSettingsGroup" class="space-y-4 hidden">
+                    
+                    <!-- Font Settings (If text exists) -->
+                    <div id="fontSettingItem">
+                        <label class="block text-xs font-medium text-slate-600 mb-1">글꼴 선택 (Font)</label>
+                        <select id="stickerFontSelect" onchange="changeStickerFont(this.value)" class="w-full p-2 border border-slate-200 rounded text-xs text-slate-700">
+                            <option value="font-nanum-gothic">나눔고딕 (기본)</option>
+                            <option value="font-nanum-myeongjo">나눔명조 (감성)</option>
+                            <option value="font-nanum-brush">나눔손글씨 붓 (손글씨)</option>
+                            <option value="font-gowun-dodum">고운돋움 (귀여움)</option>
+                        </select>
+                    </div>
+
+                    <!-- Colors -->
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-600 mb-1">배경 채우기 색상</label>
+                            <input type="color" id="stickerBgColor" onchange="changeStickerBgColor(this.value)" class="w-full h-8 rounded border border-slate-200 cursor-pointer">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-600 mb-1">테두리 선 색상</label>
+                            <input type="color" id="stickerBorderColor" onchange="changeStickerBorderColor(this.value)" class="w-full h-8 rounded border border-slate-200 cursor-pointer">
+                        </div>
+                    </div>
+
+                    <div id="textColorSettingItem">
+                        <label class="block text-xs font-medium text-slate-600 mb-1">텍스트 색상</label>
+                        <input type="color" id="stickerTextColor" onchange="changeStickerTextColor(this.value)" class="w-full h-8 rounded border border-slate-200 cursor-pointer">
+                    </div>
+
+                    <!-- Border Width -->
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">테두리 두께: <span id="borderWidthVal">1</span>px</label>
+                        <input type="range" id="stickerBorderWidth" min="0" max="10" value="1" oninput="changeStickerBorderWidth(this.value)" class="w-full">
+                    </div>
+
+                    <!-- Inner Padding / Spacing -->
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">내부 간격 (Padding): <span id="paddingVal">8</span>px</label>
+                        <input type="range" id="stickerPadding" min="0" max="30" value="8" oninput="changeStickerPadding(this.value)" class="w-full">
+                    </div>
+
+                    <!-- Opacity Slider -->
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">투명도: <span id="opacityVal">100</span>%</label>
+                        <input type="range" id="stickerOpacity" min="10" max="100" value="100" oninput="changeStickerOpacity(this.value)" class="w-full">
+                    </div>
+
+                    <!-- 4-Quadrant Matrix Colors (Only shown when Matrix selected) -->
+                    <div id="quadrantColorSettings" class="hidden border-t border-slate-100 pt-3">
+                        <label class="block text-xs font-bold text-slate-700 mb-2">4분면 사분면별 색상 개별 설정</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <span class="text-[10px] text-slate-500">1사분면 (긴급/중요)</span>
+                                <input type="color" id="q1Color" onchange="changeQuadrantColor(1, this.value)" class="w-full h-6 rounded border cursor-pointer">
+                            </div>
+                            <div>
+                                <span class="text-[10px] text-slate-500">2사분면 (중요/비긴급)</span>
+                                <input type="color" id="q2Color" onchange="changeQuadrantColor(2, this.value)" class="w-full h-6 rounded border cursor-pointer">
+                            </div>
+                            <div>
+                                <span class="text-[10px] text-slate-500">3사분면 (긴급/비중요)</span>
+                                <input type="color" id="q3Color" onchange="changeQuadrantColor(3, this.value)" class="w-full h-6 rounded border cursor-pointer">
+                            </div>
+                            <div>
+                                <span class="text-[10px] text-slate-500">4사분면 (비긴급/비중요)</span>
+                                <input type="color" id="q4Color" onchange="changeQuadrantColor(4, this.value)" class="w-full h-6 rounded border cursor-pointer">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Layer Ordering -->
+                    <div class="border-t border-slate-100 pt-3">
+                        <label class="block text-xs font-medium text-slate-600 mb-1">레이어 순서 변경</label>
+                        <div class="flex space-x-2">
+                            <button onclick="bringToFront()" class="flex-1 py-1.5 bg-slate-100 text-slate-700 rounded text-xs hover:bg-slate-200">맨 앞으로</button>
+                            <button onclick="sendToBack()" class="flex-1 py-1.5 bg-slate-100 text-slate-700 rounded text-xs hover:bg-slate-200">맨 뒤로</button>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- TAB 2: Deco SVG Stickers -->
+            <div id="tabContentStickers" class="flex-1 overflow-y-auto p-4 hidden">
+                <h3 class="text-xs font-bold text-slate-500 uppercase mb-3">다이어리 꾸미기 전용 스티커</h3>
+                <div class="grid grid-cols-3 gap-3">
+                    <button onclick="addDecoSticker('heart')" class="p-3 border rounded-lg flex flex-col items-center hover:bg-pink-50 hover:border-pink-200">
+                        <svg class="w-8 h-8 text-pink-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                        <span class="text-[10px] text-slate-600 mt-1">하트</span>
+                    </button>
+                    <button onclick="addDecoSticker('star')" class="p-3 border rounded-lg flex flex-col items-center hover:bg-amber-50 hover:border-amber-200">
+                        <svg class="w-8 h-8 text-amber-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                        <span class="text-[10px] text-slate-600 mt-1">별</span>
+                    </button>
+                    <button onclick="addDecoSticker('sparkles')" class="p-3 border rounded-lg flex flex-col items-center hover:bg-yellow-50 hover:border-yellow-200">
+                        <svg class="w-8 h-8 text-yellow-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z"/></svg>
+                        <span class="text-[10px] text-slate-600 mt-1">반짝이</span>
+                    </button>
+                    <button onclick="addDecoSticker('speech')" class="p-3 border rounded-lg flex flex-col items-center hover:bg-blue-50 hover:border-blue-200">
+                        <svg class="w-8 h-8 text-blue-400" fill="currentColor" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+                        <span class="text-[10px] text-slate-600 mt-1">말풍선</span>
+                    </button>
+                    <button onclick="addDecoSticker('ribbon')" class="p-3 border rounded-lg flex flex-col items-center hover:bg-purple-50 hover:border-purple-200">
+                        <svg class="w-8 h-8 text-purple-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                        <span class="text-[10px] text-slate-600 mt-1">아이콘</span>
+                    </button>
+                    <button onclick="addDecoSticker('check')" class="p-3 border rounded-lg flex flex-col items-center hover:bg-emerald-50 hover:border-emerald-200">
+                        <svg class="w-8 h-8 text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                        <span class="text-[10px] text-slate-600 mt-1">체크 mark</span>
+                    </button>
+                </div>
+            </div>
+
+        </aside>
+
+    </div>
+
+    <!-- JavaScript Core Logic -->
+    <script>
+        let selectedSticker = null;
+        let stickerCount = 0;
+        let historyStack = [];
+        let historyIndex = -1;
+
+        // Initialize App & Keyboard Shortcuts
+        window.addEventListener('DOMContentLoaded', () => {
+            saveState(); // Save initial empty state
+            
+            // Backspace / Delete Key Listener for selected sticker deletion
+            document.addEventListener('keydown', (e) => {
+                const activeEl = document.activeElement;
+                const isEditingText = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+                
+                if (selectedSticker && !isEditingText) {
+                    if (e.key === 'Backspace' || e.key === 'Delete') {
+                        e.preventDefault();
+                        deleteSelectedSticker();
+                    }
+                }
+                // Ctrl+Z & Ctrl+Y Undo/Redo Shortcuts
+                if (e.ctrlKey || e.metaKey) {
+                    if (e.key === 'z' || e.key === 'Z') {
+                        e.preventDefault();
+                        undo();
+                    } else if (e.key === 'y' || e.key === 'Y') {
+                        e.preventDefault();
+                        redo();
+                    }
+                }
+            });
+        });
+
+        // Save History State
+        function saveState() {
+            const page = document.getElementById('plannerPage');
+            const state = page.innerHTML;
+            
+            // Truncate redo history
+            if (historyIndex < historyStack.length - 1) {
+                historyStack = historyStack.slice(0, historyIndex + 1);
+            }
+            historyStack.push(state);
+            historyIndex = historyStack.length - 1;
+        }
+
+        function undo() {
+            if (historyIndex > 0) {
+                historyIndex--;
+                restoreState();
+            }
+        }
+
+        function redo() {
+            if (historyIndex < historyStack.length - 1) {
+                historyIndex++;
+                restoreState();
+            }
+        }
+
+        function restoreState() {
+            const page = document.getElementById('plannerPage');
+            page.innerHTML = historyStack[historyIndex];
+            selectedSticker = null;
+            updateSettingsPanel();
+            rebindEvents();
+        }
+
+        function rebindEvents() {
+            const stickers = document.querySelectorAll('.sticker-box');
+            stickers.forEach(sticker => {
+                makeStickerInteractive(sticker);
+            });
+        }
+
+        // Switch Right Sidebar Tabs
+        function switchRightTab(tab) {
+            const btnSettings = document.getElementById('tabBtnSettings');
+            const btnStickers = document.getElementById('tabBtnStickers');
+            const contentSettings = document.getElementById('tabContentSettings');
+            const contentStickers = document.getElementById('tabContentStickers');
+
+            if (tab === 'settings') {
+                btnSettings.className = "flex-1 py-3 text-xs font-bold text-indigo-600 border-b-2 border-indigo-600 bg-white flex items-center justify-center";
+                btnStickers.className = "flex-1 py-3 text-xs font-bold text-slate-500 hover:text-indigo-600 flex items-center justify-center";
+                contentSettings.classList.remove('hidden');
+                contentStickers.classList.add('hidden');
+            } else {
+                btnStickers.className = "flex-1 py-3 text-xs font-bold text-indigo-600 border-b-2 border-indigo-600 bg-white flex items-center justify-center";
+                btnSettings.className = "flex-1 py-3 text-xs font-bold text-slate-500 hover:text-indigo-600 flex items-center justify-center";
+                contentStickers.classList.remove('hidden');
+                contentSettings.classList.add('hidden');
+            }
+        }
+
+        // Create Sticker Base Component
+        function createStickerBase(width, height, contentHTML, typeName = '위젯') {
+            stickerCount++;
+            const page = document.getElementById('plannerPage');
+            const sticker = document.createElement('div');
+            sticker.id = `sticker-${Date.now()}-${stickerCount}`;
+            sticker.className = 'sticker-box font-nanum-gothic';
+            sticker.dataset.typeName = typeName;
+            sticker.style.width = width + 'px';
+            sticker.style.height = height + 'px';
+            sticker.style.left = '50px';
+            sticker.style.top = '50px';
+            sticker.style.zIndex = stickerCount + 10;
+            sticker.style.backgroundColor = '#ffffff';
+            sticker.style.borderColor = '#e2e8f0';
+            sticker.style.borderWidth = '1px';
+            sticker.style.borderStyle = 'solid';
+            sticker.style.padding = '8px';
+            sticker.style.borderRadius = '6px';
+            sticker.style.opacity = '1';
+
+            sticker.innerHTML = `
+                <div class="sticker-content w-full h-full overflow-hidden">${contentHTML}</div>
+                <div class="resize-handle nw" data-handle="nw"></div>
+                <div class="resize-handle ne" data-handle="ne"></div>
+                <div class="resize-handle sw" data-handle="sw"></div>
+                <div class="resize-handle se" data-handle="se"></div>
+            `;
+
+            page.appendChild(sticker);
+            makeStickerInteractive(sticker);
+            selectSticker(sticker);
+            saveState();
+            return sticker;
+        }
+
+        // Make Sticker Draggable & Resizable with event handling
+        function makeStickerInteractive(sticker) {
+            let isDragging = false;
+            let isResizing = false;
+            let currentHandle = null;
+            let startX, startY, startWidth, startHeight, startLeft, startTop;
+
+            sticker.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                selectSticker(sticker);
+
+                if (e.target.classList.contains('resize-handle')) {
+                    isResizing = true;
+                    currentHandle = e.target.dataset.handle;
+                } else {
+                    // Check if contenteditable text field clicked
+                    if (e.target.isContentEditable) return;
+                    isDragging = true;
+                }
+
+                startX = e.clientX;
+                startY = e.clientY;
+                startWidth = parseInt(document.defaultView.getComputedStyle(sticker).width, 10);
+                startHeight = parseInt(document.defaultView.getComputedStyle(sticker).height, 10);
+                startLeft = sticker.offsetLeft;
+                startTop = sticker.offsetTop;
+
+                const onMouseMove = (moveEvent) => {
+                    const dx = moveEvent.clientX - startX;
+                    const dy = moveEvent.clientY - startY;
+
+                    if (isDragging) {
+                        sticker.style.left = `${startLeft + dx}px`;
+                        sticker.style.top = `${startTop + dy}px`;
+                    } else if (isResizing) {
+                        if (currentHandle.includes('e')) sticker.style.width = `${startWidth + dx}px`;
+                        if (currentHandle.includes('s')) sticker.style.height = `${startHeight + dy}px`;
+                        if (currentHandle.includes('w')) {
+                            sticker.style.width = `${startWidth - dx}px`;
+                            sticker.style.left = `${startLeft + dx}px`;
+                        }
+                        if (currentHandle.includes('n')) {
+                            sticker.style.height = `${startHeight - dy}px`;
+                            sticker.style.top = `${startTop + dy}px`;
+                        }
+                    }
+                };
+
+                const onMouseUp = () => {
+                    if (isDragging || isResizing) {
+                        saveState();
+                    }
+                    isDragging = false;
+                    isResizing = false;
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                };
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+        }
+
+        // Select Sticker & Update Panel
+        function selectSticker(sticker) {
+            if (selectedSticker) {
+                selectedSticker.classList.remove('selected');
+            }
+            selectedSticker = sticker;
+            if (selectedSticker) {
+                selectedSticker.classList.add('selected');
+            }
+            updateSettingsPanel();
+        }
+
+        function handleCanvasClick(e) {
+            if (e.target.id === 'plannerPage') {
+                if (selectedSticker) {
+                    selectedSticker.classList.remove('selected');
+                    selectedSticker = null;
+                    updateSettingsPanel();
+                }
+            }
+        }
+
+        // Update Settings Sidebar UI based on selection state
+        function updateSettingsPanel() {
+            const activeName = document.getElementById('activeName');
+            const docGroup = document.getElementById('docSettingsGroup');
+            const stickerGroup = document.getElementById('stickerSettingsGroup');
+            const btnDelete = document.getElementById('btnDeleteSelected');
+            const quadGroup = document.getElementById('quadrantColorSettings');
+
+            if (!selectedSticker) {
+                activeName.innerText = '문서 전체';
+                docGroup.classList.remove('hidden');
+                stickerGroup.classList.add('hidden');
+                btnDelete.classList.add('hidden');
+                quadGroup.classList.add('hidden');
+            } else {
+                const typeName = selectedSticker.dataset.typeName || '스티커';
+                activeName.innerText = typeName;
+                docGroup.classList.add('hidden');
+                stickerGroup.classList.remove('hidden');
+                btnDelete.classList.remove('hidden');
+
+                // Read values
+                const bg = rgbToHex(selectedSticker.style.backgroundColor);
+                const border = rgbToHex(selectedSticker.style.borderColor);
+                const color = rgbToHex(selectedSticker.style.color);
+                const opacity = Math.round((parseFloat(selectedSticker.style.opacity) || 1) * 100);
+                const bWidth = parseInt(selectedSticker.style.borderWidth) || 0;
+                const pad = parseInt(selectedSticker.style.padding) || 0;
+
+                document.getElementById('stickerBgColor').value = bg;
+                document.getElementById('stickerBorderColor').value = border;
+                document.getElementById('stickerTextColor').value = color;
+                document.getElementById('stickerOpacity').value = opacity;
+                document.getElementById('opacityVal').innerText = opacity;
+                document.getElementById('stickerBorderWidth').value = bWidth;
+                document.getElementById('borderWidthVal').innerText = bWidth;
+                document.getElementById('stickerPadding').value = pad;
+                document.getElementById('paddingVal').innerText = pad;
+
+                // Show 4-Quadrant color settings if matrix selected
+                if (typeName.includes('4분면')) {
+                    quadGroup.classList.remove('hidden');
+                } else {
+                    quadGroup.classList.add('hidden');
+                }
+            }
+        }
+
+        function deleteSelectedSticker() {
+            if (selectedSticker) {
+                selectedSticker.remove();
+                selectedSticker = null;
+                updateSettingsPanel();
+                saveState();
+            }
+        }
+
+        // Helper Color RGB to Hex
+        function rgbToHex(rgb) {
+            if (!rgb || rgb === 'transparent') return '#ffffff';
+            if (rgb.startsWith('#')) return rgb;
+            const res = rgb.match(/\d+/g);
+            if (!res) return '#ffffff';
+            return "#" + ((1 << 24) + (parseInt(res[0]) << 16) + (parseInt(res[1]) << 8) + parseInt(res[2])).toString(16).slice(1);
+        }
+
+        // Property Change Handlers
+        function changeDocBgColor(val) {
+            document.getElementById('plannerPage').style.backgroundColor = val;
+            saveState();
+        }
+
+        function toggleGridPattern() {
+            document.getElementById('plannerPage').classList.toggle('grid-pattern');
+            saveState();
+        }
+
+        function applyDocPreset(color) {
+            document.getElementById('plannerPage').style.backgroundColor = color;
+            document.getElementById('docBgColor').value = color;
+            saveState();
+        }
+
+        function changeStickerBgColor(val) {
+            if (selectedSticker) {
+                selectedSticker.style.backgroundColor = val;
+                saveState();
+            }
+        }
+
+        function changeStickerBorderColor(val) {
+            if (selectedSticker) {
+                selectedSticker.style.borderColor = val;
+                saveState();
+            }
+        }
+
+        function changeStickerTextColor(val) {
+            if (selectedSticker) {
+                selectedSticker.style.color = val;
+                const textEls = selectedSticker.querySelectorAll('[contenteditable="true"], span, p, h1, h2, h3');
+                textEls.forEach(el => el.style.color = val);
+                saveState();
+            }
+        }
+
+        function changeStickerBorderWidth(val) {
+            if (selectedSticker) {
+                selectedSticker.style.borderWidth = val + 'px';
+                document.getElementById('borderWidthVal').innerText = val;
+                saveState();
+            }
+        }
+
+        function changeStickerPadding(val) {
+            if (selectedSticker) {
+                selectedSticker.style.padding = val + 'px';
+                document.getElementById('paddingVal').innerText = val;
+                saveState();
+            }
+        }
+
+        function changeStickerOpacity(val) {
+            if (selectedSticker) {
+                selectedSticker.style.opacity = val / 100;
+                document.getElementById('opacityVal').innerText = val;
+                saveState();
+            }
+        }
+
+        function changeStickerFont(fontClass) {
+            if (selectedSticker) {
+                selectedSticker.classList.remove('font-nanum-gothic', 'font-nanum-myeongjo', 'font-nanum-brush', 'font-gowun-dodum');
+                selectedSticker.classList.add(fontClass);
+                saveState();
+            }
+        }
+
+        function bringToFront() {
+            if (selectedSticker) {
+                stickerCount++;
+                selectedSticker.style.zIndex = stickerCount + 20;
+                saveState();
+            }
+        }
+
+        function sendToBack() {
+            if (selectedSticker) {
+                selectedSticker.style.zIndex = 1;
+                saveState();
+            }
+        }
+
+        // --- STICKER GENERATION TEMPLATES --- //
+
+        function addTextSticker() {
+            const html = `<div contenteditable="true" class="w-full h-full text-slate-800 text-base focus:outline-none">텍스트를 입력하세요</div>`;
+            createStickerBase(200, 80, html, '텍스트 상자');
+        }
+
+        function addShape(type) {
+            if (type === 'rect') {
+                createStickerBase(120, 120, `<div class="w-full h-full"></div>`, '사각형');
+            } else if (type === 'circle') {
+                const s = createStickerBase(120, 120, `<div class="w-full h-full rounded-full border border-inherit"></div>`, '원형');
+                s.style.borderRadius = '50%';
+            }
+        }
+
+        // Circular 24h Planners (4 Styles)
+        function addCircularPlanner(styleType) {
+            let svgContent = '';
+            
+            if (styleType === 'line') {
+                // Minimal Line
+                svgContent = `
+                    <svg viewBox="0 0 200 200" class="w-full h-full">
+                        <circle cx="100" cy="100" r="85" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-300"/>
+                        <circle cx="100" cy="100" r="3" fill="currentColor" class="text-slate-400"/>
+                        <!-- 8 Major Hour Lines -->
+                        ${[0, 45, 90, 135, 180, 225, 270, 315].map(deg => 
+                            `<line x1="100" y1="100" x2="${100 + 85 * Math.cos(deg * Math.PI / 180)}" y2="${100 + 85 * Math.sin(deg * Math.PI / 180)}" stroke="currentColor" stroke-width="1" class="text-slate-200" />`
+                        ).join('')}
+                        <text x="100" y="28" text-anchor="middle" font-size="10" fill="#64748b" font-weight="bold">24</text>
+                        <text x="178" y="103" text-anchor="middle" font-size="10" fill="#64748b" font-weight="bold">06</text>
+                        <text x="100" y="180" text-anchor="middle" font-size="10" fill="#64748b" font-weight="bold">12</text>
+                        <text x="22" y="103" text-anchor="middle" font-size="10" fill="#64748b" font-weight="bold">18</text>
+                    </svg>
+                `;
+            } else if (styleType === 'pie') {
+                // 12-Section Pie Wheel
+                svgContent = `
+                    <svg viewBox="0 0 200 200" class="w-full h-full">
+                        <circle cx="100" cy="100" r="85" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-400"/>
+                        ${[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map(deg => 
+                            `<line x1="100" y1="100" x2="${100 + 85 * Math.cos(deg * Math.PI / 180)}" y2="${100 + 85 * Math.sin(deg * Math.PI / 180)}" stroke="currentColor" stroke-width="1" class="text-slate-300" stroke-dasharray="2,2" />`
+                        ).join('')}
+                        <circle cx="100" cy="100" r="4" fill="currentColor" class="text-indigo-500"/>
+                        <text x="100" y="26" text-anchor="middle" font-size="9" fill="#475569">24</text>
+                        <text x="176" y="103" text-anchor="middle" font-size="9" fill="#475569">06</text>
+                        <text x="100" y="180" text-anchor="middle" font-size="9" fill="#475569">12</text>
+                        <text x="24" y="103" text-anchor="middle" font-size="9" fill="#475569">18</text>
+                    </svg>
+                `;
+            } else if (styleType === 'ring') {
+                // Double Ring Target
+                svgContent = `
+                    <svg viewBox="0 0 200 200" class="w-full h-full">
+                        <circle cx="100" cy="100" r="85" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-300"/>
+                        <circle cx="100" cy="100" r="60" fill="none" stroke="currentColor" stroke-width="1.5" class="text-slate-300"/>
+                        <circle cx="100" cy="100" r="3" fill="currentColor" class="text-indigo-500"/>
+                        <text x="100" y="32" text-anchor="middle" font-size="9" fill="#6366f1" font-weight="bold">24:00</text>
+                        <text x="100" y="176" text-anchor="middle" font-size="9" fill="#6366f1" font-weight="bold">12:00</text>
+                    </svg>
+                `;
+            } else if (styleType === 'daynight') {
+                // 12h Day & Night
+                svgContent = `
+                    <svg viewBox="0 0 200 200" class="w-full h-full">
+                        <path d="M 100 15 A 85 85 0 0 1 100 185 Z" fill="#fef3c7" opacity="0.4"/>
+                        <path d="M 100 185 A 85 85 0 0 1 100 15 Z" fill="#e0e7ff" opacity="0.4"/>
+                        <circle cx="100" cy="100" r="85" fill="none" stroke="#94a3b8" stroke-width="2"/>
+                        <line x1="100" y1="15" x2="100" y2="185" stroke="#94a3b8" stroke-width="1.5"/>
+                        <circle cx="100" cy="100" r="3" fill="#475569"/>
+                        <text x="140" y="103" text-anchor="middle" font-size="10" fill="#d97706">DAY (AM)</text>
+                        <text x="60" y="103" text-anchor="middle" font-size="10" fill="#4338ca">NIGHT (PM)</text>
+                    </svg>
+                `;
+            }
+
+            createStickerBase(220, 220, svgContent, '원형 24시 플래너');
+        }
+
+        // Wrong Answer Notes 3 Templates
+        function addWrongAnswerNote(type) {
+            let html = '';
+            if (type === 'basic') {
+                html = `
+                    <div class="w-full h-full flex flex-col text-xs">
+                        <div class="font-bold border-b pb-1 mb-2 flex justify-between">
+                            <span contenteditable="true">오답노트 #1</span>
+                            <span contenteditable="true">복습: □ 1회 □ 2회 □ 3회</span>
+                        </div>
+                        <div class="flex-1 grid grid-cols-2 gap-2 h-full">
+                            <div border rounded p-1.5 class="border-slate-200">
+                                <div class="text-[10px] text-slate-400 mb-1 font-bold">문제 및 내 풀이</div>
+                                <div contenteditable="true" class="w-full h-full focus:outline-none"></div>
+                            </div>
+                            <div border rounded p-1.5 class="border-slate-200 bg-slate-50/50">
+                                <div class="text-[10px] text-slate-400 mb-1 font-bold">정답 & 오답 원인분석</div>
+                                <div contenteditable="true" class="w-full h-full focus:outline-none"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                createStickerBase(340, 220, html, '기본 오답노트');
+            } else if (type === 'cornell') {
+                html = `
+                    <div class="w-full h-full flex flex-col text-xs">
+                        <div class="font-bold border-b pb-1 mb-1" contenteditable="true">단원 / 핵심 개념: </div>
+                        <div class="flex-1 flex gap-2 my-1">
+                            <div class="w-1/3 border border-slate-200 rounded p-1" contenteditable="true" placeholder="키워드/공식"></div>
+                            <div class="w-2/3 border border-slate-200 rounded p-1" contenteditable="true" placeholder="상세 오답 내용"></div>
+                        </div>
+                        <div class="border border-indigo-100 bg-indigo-50/30 rounded p-1 text-[11px]" contenteditable="true">한줄 요약 및 실수 방지 팁:</div>
+                    </div>
+                `;
+                createStickerBase(340, 240, html, '코넬 오답노트');
+            } else if (type === 'scrap') {
+                html = `
+                    <div class="w-full h-full flex flex-col text-xs">
+                        <div class="font-bold border-b pb-1 mb-1 text-slate-500" contenteditable="true">문제 스크랩 / 이미지 첨부 구역</div>
+                        <div class="flex-1 border-2 border-dashed border-slate-200 rounded mb-2 flex items-center justify-center text-slate-300">
+                            문제 이미지를 위에 올려놓으세요
+                        </div>
+                        <div class="h-1/3 border border-slate-200 rounded p-1" contenteditable="true" placeholder="오답 메모"></div>
+                    </div>
+                `;
+                createStickerBase(320, 260, html, '스크랩 오답노트');
+            }
+        }
+
+        // Todo List with Infinite Item Adder
+        function addTodoList() {
+            const html = `
+                <div class="w-full h-full flex flex-col text-xs">
+                    <div class="font-bold border-b pb-1 mb-2 text-slate-700" contenteditable="true">TO-DO LIST</div>
+                    <div class="todo-items-container flex-1 overflow-y-auto space-y-1.5 pr-1">
+                        <div class="flex items-center space-x-2">
+                            <input type="checkbox" class="rounded border-slate-300 text-indigo-600 focus:ring-0">
+                            <span contenteditable="true" class="flex-1 focus:outline-none">할 일 항목 입력</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input type="checkbox" class="rounded border-slate-300 text-indigo-600 focus:ring-0">
+                            <span contenteditable="true" class="flex-1 focus:outline-none">할 일 항목 입력</span>
+                        </div>
+                    </div>
+                    <button onclick="addTodoItem(this)" class="mt-2 w-full py-1 border border-dashed border-slate-300 rounded text-slate-400 hover:text-indigo-600 hover:border-indigo-300 text-[11px] transition">
+                        + 항목 추가
+                    </button>
+                </div>
+            `;
+            createStickerBase(200, 220, html, '투두리스트');
+        }
+
+        function addTodoItem(btn) {
+            const container = btn.previousElementSibling;
+            const item = document.createElement('div');
+            item.className = 'flex items-center space-x-2';
+            item.innerHTML = `
+                <input type="checkbox" class="rounded border-slate-300 text-indigo-600 focus:ring-0">
+                <span contenteditable="true" class="flex-1 focus:outline-none">할 일 항목 입력</span>
+            `;
+            container.appendChild(item);
+            saveState();
+        }
+
+        // Timeline (06:00 to 02:00 next day)
+        function addTimeline() {
+            const hours = ['06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '00', '01', '02'];
+            const html = `
+                <div class="w-full h-full flex flex-col text-xs">
+                    <div class="font-bold border-b pb-1 mb-1 text-slate-700" contenteditable="true">TIMELINE (06:00 - 02:00)</div>
+                    <div class="flex-1 overflow-y-auto space-y-1">
+                        ${hours.map(h => `
+                            <div class="flex items-center h-4 border-b border-slate-100">
+                                <span class="w-6 text-[10px] text-slate-400 font-mono">${h}</span>
+                                <div contenteditable="true" class="flex-1 h-full focus:outline-none"></div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            createStickerBase(220, 320, html, '타임라인');
+        }
+
+        // Eisenhower 4-Quadrant Matrix with individual quadrant colors
+        function addEisenhowerMatrix() {
+            const html = `
+                <div class="w-full h-full flex flex-col text-xs">
+                    <div class="font-bold text-center mb-1 text-slate-700" contenteditable="true">우선순위 매트릭스</div>
+                    <div class="flex-1 grid grid-cols-2 gap-1.5">
+                        <div id="q1" class="border border-red-200 bg-red-50/40 p-1.5 rounded flex flex-col">
+                            <span class="text-[10px] font-bold text-red-500 mb-1" contenteditable="true">1. 긴급 & 중요</span>
+                            <div contenteditable="true" class="flex-1 focus:outline-none"></div>
+                        </div>
+                        <div id="q2" class="border border-blue-200 bg-blue-50/40 p-1.5 rounded flex flex-col">
+                            <span class="text-[10px] font-bold text-blue-500 mb-1" contenteditable="true">2. 중요 & 비긴급</span>
+                            <div contenteditable="true" class="flex-1 focus:outline-none"></div>
+                        </div>
+                        <div id="q3" class="border border-amber-200 bg-amber-50/40 p-1.5 rounded flex flex-col">
+                            <span class="text-[10px] font-bold text-amber-500 mb-1" contenteditable="true">3. 긴급 & 비중요</span>
+                            <div contenteditable="true" class="flex-1 focus:outline-none"></div>
+                        </div>
+                        <div id="q4" class="border border-slate-200 bg-slate-50/40 p-1.5 rounded flex flex-col">
+                            <span class="text-[10px] font-bold text-slate-400 mb-1" contenteditable="true">4. 비긴급 & 비중요</span>
+                            <div contenteditable="true" class="flex-1 focus:outline-none"></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            createStickerBase(280, 240, html, '4분면 매트릭스');
+        }
+
+        function changeQuadrantColor(qNum, color) {
+            if (selectedSticker) {
+                const qEl = selectedSticker.querySelector(`#q${qNum}`);
+                if (qEl) {
+                    qEl.style.backgroundColor = color;
+                    saveState();
+                }
+            }
+        }
+
+        // Monthly Grid (1 to 31 populated)
+        function addMonthlyGrid() {
+            let daysHTML = '';
+            for (let i = 1; i <= 31; i++) {
+                daysHTML += `<div class="border border-slate-200 p-0.5 text-[9px] text-slate-400 font-mono">${i}</div>`;
+            }
+            const html = `
+                <div class="w-full h-full flex flex-col text-xs">
+                    <div class="font-bold text-center mb-1 text-slate-700" contenteditable="true">MONTHLY PLANNER</div>
+                    <div class="grid grid-cols-7 text-center font-bold text-[10px] text-slate-400 mb-1">
+                        <span>SUN</span><span>MON</span><span>TUE</span><span>WED</span><span>THU</span><span>FRI</span><span>SAT</span>
+                    </div>
+                    <div class="flex-1 grid grid-cols-7 grid-rows-5 gap-0.5">
+                        ${daysHTML}
+                    </div>
+                </div>
+            `;
+            createStickerBase(320, 240, html, '월간 달력');
+        }
+
+        function addLinedPaper() {
+            const html = `<div class="w-full h-full space-y-3 pt-2" style="background: repeating-linear-gradient(transparent, transparent 23px, #e2e8f0 24px);"></div>`;
+            createStickerBase(240, 200, html, '줄노트');
+        }
+
+        function addGridPaper() {
+            const html = `<div class="w-full h-full grid-pattern border border-slate-200 rounded"></div>`;
+            createStickerBase(240, 200, html, '모눈종이');
+        }
+
+        function addHabitTracker() {
+            const html = `
+                <div class="w-full h-full flex flex-col text-xs">
+                    <div class="font-bold border-b pb-1 mb-2 text-slate-700" contenteditable="true">HABIT TRACKER</div>
+                    <div class="flex-1 space-y-2">
+                        <div class="flex items-center space-x-1">
+                            <span contenteditable="true" class="w-16 truncate">운동하기</span>
+                            <div class="flex-1 grid grid-cols-10 gap-0.5">
+                                ${Array(10).fill(0).map(() => `<div class="h-3 border border-slate-200 rounded-sm"></div>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            createStickerBase(260, 150, html, '습관 트래커');
+        }
+
+        function addBudgetTracker() {
+            const html = `
+                <div class="w-full h-full flex flex-col text-xs">
+                    <div class="font-bold border-b pb-1 mb-1 text-slate-700" contenteditable="true">가계부 / 지출</div>
+                    <div class="grid grid-cols-3 font-bold text-[10px] text-slate-400 border-b pb-1">
+                        <span>항목</span><span>금액</span><span>비고</span>
+                    </div>
+                    <div class="flex-1 space-y-1 mt-1">
+                        <div class="grid grid-cols-3 gap-1">
+                            <div contenteditable="true"></div><div contenteditable="true"></div><div contenteditable="true"></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            createStickerBase(240, 180, html, '가계부');
+        }
+
+        function addPostIt() {
+            const s = createStickerBase(160, 160, `<div contenteditable="true" class="w-full h-full focus:outline-none text-amber-900">메모를 입력하세요</div>`, '포스트잇');
+            s.style.backgroundColor = '#fef08a';
+            s.style.borderColor = '#fef08a';
+            s.style.boxShadow = '2px 4px 10px rgba(0,0,0,0.1)';
+        }
+
+        function addHyperlinkSticker() {
+            const html = `
+                <div class="w-full h-full flex items-center justify-center bg-indigo-500 text-white rounded font-bold text-xs cursor-pointer shadow-sm">
+                    <i class="fa-solid fa-arrow-right mr-1"></i> <span contenteditable="true">페이지 1</span>
+                </div>
+            `;
+            createStickerBase(100, 36, html, '하이퍼링크 탭');
+        }
+
+        // Add Deco SVG Stickers without border box
+        function addDecoSticker(type) {
+            let svg = '';
+            if (type === 'heart') svg = `<svg class="w-full h-full text-pink-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`;
+            else if (type === 'star') svg = `<svg class="w-full h-full text-amber-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>`;
+            else if (type === 'sparkles') svg = `<svg class="w-full h-full text-yellow-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z"/></svg>`;
+            else if (type === 'speech') svg = `<svg class="w-full h-full text-blue-400" fill="currentColor" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>`;
+            else if (type === 'ribbon') svg = `<svg class="w-full h-full text-purple-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>`;
+            else if (type === 'check') svg = `<svg class="w-full h-full text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
+
+            const s = createStickerBase(60, 60, svg, '다꾸 스티커');
+            s.style.backgroundColor = 'transparent';
+            s.style.borderColor = 'transparent';
+            s.style.padding = '0px';
+        }
+
+        // Upload Image File
+        function uploadImage(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(evt) {
+                    const html = `<img src="${evt.target.result}" class="w-full h-full object-contain pointer-events-none" />`;
+                    createStickerBase(150, 150, html, '이미지');
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        // Save & Load JSON State
+        function saveJSON() {
+            const page = document.getElementById('plannerPage');
+            const data = {
+                bgColor: page.style.backgroundColor,
+                html: page.innerHTML
+            };
+            const jsonStr = JSON.stringify(data);
+            const blob = new Blob([jsonStr], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `my-digital-planner-${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function loadJSON(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(evt) {
+                    const data = JSON.parse(evt.target.result);
+                    const page = document.getElementById('plannerPage');
+                    if (data.bgColor) page.style.backgroundColor = data.bgColor;
+                    page.innerHTML = data.html;
+                    rebindEvents();
+                    saveState();
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        // Export High-Quality PDF
+        function exportToPDF() {
+            if (selectedSticker) {
+                selectedSticker.classList.remove('selected');
+                selectedSticker = null;
+                updateSettingsPanel();
+            }
+
+            const element = document.getElementById('plannerPage');
+            const opt = {
+                margin: 0,
+                filename: `digital-planner-${Date.now()}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            html2pdf().set(opt).from(element).save();
+        }
+    </script>
+</body>
+</html>
